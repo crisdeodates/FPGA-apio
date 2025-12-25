@@ -15,7 +15,8 @@ import json
 from pathlib import Path
 import click
 from apio.commands import options
-from apio.managers import installer
+
+# from apio.managers import packages
 from apio.managers.examples import Examples, ExampleInfo
 from apio.common.apio_console import cout, cerror
 from apio.common.apio_styles import INFO
@@ -23,7 +24,12 @@ from apio.common.common_util import get_project_source_files
 from apio.utils import cmd_util, usb_util, serial_util, util
 from apio.utils.usb_util import UsbDevice
 from apio.utils.serial_util import SerialDevice
-from apio.apio_context import ApioContext, ProjectPolicy, RemoteConfigPolicy
+from apio.apio_context import (
+    ApioContext,
+    PackagesPolicy,
+    ProjectPolicy,
+    RemoteConfigPolicy,
+)
 from apio.utils.cmd_util import (
     ApioGroup,
     ApioSubgroup,
@@ -71,6 +77,14 @@ def write_as_json_doc(top_dict: Dict, output_flag: str, force_flag: bool):
             cout("Use the --force option to allow overwriting.", style=INFO)
             sys.exit(1)
 
+        # -- if there file path contains a parent dir, make
+        # -- sure it exists. If output_flag is just a file name such
+        # -- as 'foo.json', we don nothing.
+        dirname = os.path.dirname(output_flag)
+        if dirname:
+            os.makedirs(dirname, exist_ok=True)
+
+        # -- Write to file.
         with open(output_flag, "w", encoding="utf-8") as f:
             f.write(text)
     else:
@@ -86,7 +100,6 @@ APIO_API_GET_SYSTEM_HELP = """
 The command 'apio api get-system' exports information about apio and \
 the underlying system as a JSON foc.  It is similar to the command \
 'apio info system' which is intended for human consumption.
-
 
 The optional flag '--timestamp' allows the caller to embed in the JSON \
 document a known timestamp that allows to verify that the JSON document \
@@ -107,7 +120,7 @@ Examples:[code]
 # @click.pass_context
 @timestamp_option
 @output_option
-@options.force_option_gen(help="Overwrite output file.")
+@options.force_option_gen(short_help="Overwrite output file.")
 def _get_system_cli(
     # Options
     timestamp: str,
@@ -118,7 +131,8 @@ def _get_system_cli(
 
     apio_ctx = ApioContext(
         project_policy=ProjectPolicy.NO_PROJECT,
-        config_policy=RemoteConfigPolicy.NO_CONFIG,
+        remote_config_policy=RemoteConfigPolicy.CACHED_OK,
+        packages_policy=PackagesPolicy.ENSURE_PACKAGES,
     )
 
     # -- The top dict that we will emit as json.
@@ -131,20 +145,26 @@ def _get_system_cli(
     section_dict = {}
 
     # -- Add fields.
-    section_dict["apio-version"] = util.get_apio_version()
+    section_dict["apio-version"] = util.get_apio_version_str()
     section_dict["python-version"] = util.get_python_version()
+    section_dict["python-executable"] = sys.executable
     section_dict["platform-id"] = apio_ctx.platform_id
+    section_dict["scons-shell-id"] = apio_ctx.scons_shell_id
+    section_dict["vscode-debugger"] = str(
+        util.is_under_vscode_debugger()
+    ).lower()
+    section_dict["pyinstaller"] = str(util.is_pyinstaller_app()).lower()
     section_dict["apio-python_package"] = str(
         util.get_path_in_apio_package("")
     )
-    section_dict["apio-home"] = str(apio_ctx.home_dir)
-    section_dict["apio-packages"] = str(apio_ctx.packages_dir)
+    section_dict["apio-home-dir"] = str(apio_ctx.apio_home_dir)
+    section_dict["apio-packages-dir"] = str(apio_ctx.apio_packages_dir)
     section_dict["remote-config-url"] = apio_ctx.profile.remote_config_url
     section_dict["verible-formatter"] = str(
-        apio_ctx.packages_dir / "verible/bin/verible-verilog-format"
+        apio_ctx.apio_packages_dir / "verible/bin/verible-verilog-format"
     )
     section_dict["verible-language-server"] = str(
-        apio_ctx.packages_dir / "verible/bin/verible-verilog-ls"
+        apio_ctx.apio_packages_dir / "verible/bin/verible-verilog-ls"
     )
 
     # -- Add section
@@ -185,7 +205,7 @@ Examples:[code]
 @options.project_dir_option
 @timestamp_option
 @output_option
-@options.force_option_gen(help="Overwrite output file.")
+@options.force_option_gen(short_help="Overwrite output file.")
 def _get_project_cli(
     # Options
     env: str,
@@ -198,7 +218,8 @@ def _get_project_cli(
 
     apio_ctx = ApioContext(
         project_policy=ProjectPolicy.PROJECT_REQUIRED,
-        config_policy=RemoteConfigPolicy.NO_CONFIG,
+        remote_config_policy=RemoteConfigPolicy.CACHED_OK,
+        packages_policy=PackagesPolicy.ENSURE_PACKAGES,
         project_dir_arg=project_dir,
         env_arg=env,
     )
@@ -259,7 +280,7 @@ Examples:[code]
 )
 @timestamp_option
 @output_option
-@options.force_option_gen(help="Overwrite output file.")
+@options.force_option_gen(short_help="Overwrite output file.")
 def _get_boards_cli(
     # Options
     timestamp: str,
@@ -272,7 +293,8 @@ def _get_boards_cli(
     # -- change in the future.
     apio_ctx = ApioContext(
         project_policy=ProjectPolicy.NO_PROJECT,
-        config_policy=RemoteConfigPolicy.CACHED_OK,
+        remote_config_policy=RemoteConfigPolicy.CACHED_OK,
+        packages_policy=PackagesPolicy.ENSURE_PACKAGES,
     )
 
     # -- The top dict that we will emit as json.
@@ -282,7 +304,7 @@ def _get_boards_cli(
     if timestamp:
         top_dict["timestamp"] = timestamp
 
-    # -- Generate the 'boards' section.
+    # -- Generate the boards section.
     section = {}
     for board_id, board_info in apio_ctx.boards.items():
         # -- The board output dict.
@@ -342,7 +364,7 @@ Examples:[code]
 )
 @timestamp_option
 @output_option
-@options.force_option_gen(help="Overwrite output file.")
+@options.force_option_gen(short_help="Overwrite output file.")
 def _get_fpgas_cli(
     # Options
     timestamp: str,
@@ -355,7 +377,8 @@ def _get_fpgas_cli(
     # -- change in the future.
     apio_ctx = ApioContext(
         project_policy=ProjectPolicy.NO_PROJECT,
-        config_policy=RemoteConfigPolicy.NO_CONFIG,
+        remote_config_policy=RemoteConfigPolicy.CACHED_OK,
+        packages_policy=PackagesPolicy.ENSURE_PACKAGES,
     )
 
     # -- The top dict that we will emit as json.
@@ -365,7 +388,7 @@ def _get_fpgas_cli(
     if timestamp:
         top_dict["timestamp"] = timestamp
 
-    # -- Generate the 'fpgas' section.
+    # -- Generate the fpgas section
     section = {}
     for fpga_id, fpga_info in apio_ctx.fpgas.items():
         # -- The fpga output dict.
@@ -379,6 +402,67 @@ def _get_fpgas_cli(
         section[fpga_id] = fpga_dict
 
     top_dict["fpgas"] = section
+
+    # -- Write out
+    write_as_json_doc(top_dict, output, force)
+
+
+# ------ apio api get-programmers
+
+
+# -- Text in the rich-text format of the python rich library.
+APIO_API_GET_PROGRAMMERS_HELP = """
+The command 'apio api get-programmers' exports apio programmers information \
+as a JSON document.
+
+The optional flag '--timestamp' allows the caller to embed in the JSON \
+document a known timestamp that allows to verify that the JSON document \
+was indeed was generated by the same invocation.
+
+Examples:[code]
+  apio api get-programmers               # Write to stdout
+  apio api get-programmers -o apio.json  # Write to a file[/code]
+"""
+
+
+@click.command(
+    name="get-programmers",
+    cls=ApioCommand,
+    short_help="Retrieve programmers information.",
+    help=APIO_API_GET_PROGRAMMERS_HELP,
+)
+@timestamp_option
+@output_option
+@options.force_option_gen(short_help="Overwrite output file.")
+def _get_programmers_cli(
+    # Options
+    timestamp: str,
+    output: str,
+    force: bool,
+):
+    """Implements the 'apio apio get-programmers' command."""
+
+    # -- For now, the information is not in a project context. That may
+    # -- change in the future.
+    apio_ctx = ApioContext(
+        project_policy=ProjectPolicy.NO_PROJECT,
+        remote_config_policy=RemoteConfigPolicy.CACHED_OK,
+        packages_policy=PackagesPolicy.ENSURE_PACKAGES,
+    )
+
+    # -- The top dict that we will emit as json.
+    top_dict = {}
+
+    # -- Append user timestamp if specified.
+    if timestamp:
+        top_dict["timestamp"] = timestamp
+
+    # -- Generate the 'programmers' section.
+    section = {}
+    for programmer_id, programmer_info in apio_ctx.programmers.items():
+        section[programmer_id] = programmer_info
+
+    top_dict["programmers"] = section
 
     # -- Write out
     write_as_json_doc(top_dict, output, force)
@@ -410,7 +494,7 @@ Examples:[code]
 )
 @timestamp_option
 @output_option
-@options.force_option_gen(help="Overwrite output file.")
+@options.force_option_gen(short_help="Overwrite output file.")
 def _get_examples_cli(
     # Options
     timestamp: str,
@@ -423,7 +507,8 @@ def _get_examples_cli(
     # -- change in the future.
     apio_ctx = ApioContext(
         project_policy=ProjectPolicy.NO_PROJECT,
-        config_policy=RemoteConfigPolicy.CACHED_OK,
+        remote_config_policy=RemoteConfigPolicy.CACHED_OK,
+        packages_policy=PackagesPolicy.ENSURE_PACKAGES,
     )
 
     # -- Get examples infos.
@@ -531,7 +616,7 @@ Examples:[code]
 @click.pass_context
 @timestamp_option
 @output_option
-@options.force_option_gen(help="Overwrite output file.")
+@options.force_option_gen(short_help="Overwrite output file.")
 def _get_commands_cli(
     # Click context
     cmd_ctx: ApioCmdContext,
@@ -554,7 +639,8 @@ def _get_commands_cli(
     # -- This initializes the console, print active env vars, etc.
     ApioContext(
         project_policy=ProjectPolicy.NO_PROJECT,
-        config_policy=RemoteConfigPolicy.NO_CONFIG,
+        remote_config_policy=RemoteConfigPolicy.CACHED_OK,
+        packages_policy=PackagesPolicy.ENSURE_PACKAGES,
     )
 
     # -- The top dict that we will emit as json.
@@ -598,7 +684,7 @@ Examples:[code]
 )
 @timestamp_option
 @output_option
-@options.force_option_gen(help="Overwrite output file.")
+@options.force_option_gen(short_help="Overwrite output file.")
 def _scan_devices_cli(
     # Options
     timestamp: str,
@@ -612,7 +698,8 @@ def _scan_devices_cli(
     # -- the packages.
     apio_ctx = ApioContext(
         project_policy=ProjectPolicy.NO_PROJECT,
-        config_policy=RemoteConfigPolicy.CACHED_OK,
+        remote_config_policy=RemoteConfigPolicy.CACHED_OK,
+        packages_policy=PackagesPolicy.ENSURE_PACKAGES,
     )
 
     # -- The top dict that we will emit as json.
@@ -623,7 +710,7 @@ def _scan_devices_cli(
         top_dict["timestamp"] = timestamp
 
     # -- We need the packages for the 'libusb' backend.
-    installer.install_missing_packages_on_the_fly(apio_ctx)
+    # packages.install_missing_packages_on_the_fly(apio_ctx.packages_context)
 
     usb_devices: List[UsbDevice] = usb_util.scan_usb_devices(apio_ctx)
 
@@ -685,6 +772,7 @@ SUBGROUPS = [
             _get_project_cli,
             _get_boards_cli,
             _get_fpgas_cli,
+            _get_programmers_cli,
             _get_examples_cli,
             _get_commands_cli,
             _scan_devices_cli,

@@ -7,21 +7,30 @@
 # -- License GPLv2
 """Implementation of 'apio info' command"""
 
+import sys
 from typing import List
+from datetime import date
 import click
 from rich.table import Table
 from rich.text import Text
 from rich import box
 from rich.color import ANSI_COLOR_NAMES
-from apio.common.apio_styles import BORDER, EMPH1, EMPH3, INFO
+from apio.common.apio_styles import BORDER, EMPH1, EMPH2, EMPH3, INFO
 from apio.utils import util
-from apio.apio_context import ApioContext, ProjectPolicy, RemoteConfigPolicy
+from apio.commands import options
+from apio.apio_context import (
+    ApioContext,
+    PackagesPolicy,
+    ProjectPolicy,
+    RemoteConfigPolicy,
+)
 from apio.utils.cmd_util import ApioGroup, ApioSubgroup, ApioCommand
 from apio.common.apio_themes import THEMES_TABLE, THEME_LIGHT
 from apio.profile import get_datetime_stamp, days_between_datetime_stamps
 from apio.common.apio_console import (
     PADDING,
     cout,
+    cwrite,
     cstyle,
     ctable,
     get_theme,
@@ -72,7 +81,9 @@ installation issues.
 Examples:[code]
   apio info system   # System info.[/code]
 
-[b][Advanced][/b] The default location of the Apio home directory, \
+[NOTE] For programmatic access to this information use 'apio api get-system'.
+
+[ADVANCED] The default location of the Apio home directory, \
 where apio saves preferences and packages, is in the '.apio' directory \
 under the user home directory but can be changed using the system \
 environment variable 'APIO_HOME'.
@@ -92,7 +103,8 @@ def _system_cli():
     # -- to be loaded so we can report it.
     apio_ctx = ApioContext(
         project_policy=ProjectPolicy.NO_PROJECT,
-        config_policy=RemoteConfigPolicy.CACHED_OK,
+        remote_config_policy=RemoteConfigPolicy.CACHED_OK,
+        packages_policy=PackagesPolicy.ENSURE_PACKAGES,
     )
 
     # -- Define the table.
@@ -110,25 +122,29 @@ def _system_cli():
     table.add_column("VALUE", no_wrap=True, style=EMPH1)
 
     # -- Add rows
-    table.add_row("Apio version", util.get_apio_version())
+    table.add_row("Apio version", util.get_apio_version_str())
     table.add_row("Python version", util.get_python_version())
+    table.add_row("Python executable", sys.executable)
     table.add_row("Platform id", apio_ctx.platform_id)
+    table.add_row("Scons shell id", apio_ctx.scons_shell_id)
+    table.add_row("VSCode debugger", str(util.is_under_vscode_debugger()))
+    table.add_row("Pyinstaller", str(util.is_pyinstaller_app()))
     table.add_row(
         "Apio Python package", str(util.get_path_in_apio_package(""))
     )
-    table.add_row("Apio home", str(apio_ctx.home_dir))
-    table.add_row("Apio packages", str(apio_ctx.packages_dir))
+    table.add_row("Apio home dir", str(apio_ctx.apio_home_dir))
+    table.add_row("Apio packages dir", str(apio_ctx.apio_packages_dir))
     table.add_row("Remote config URL", apio_ctx.profile.remote_config_url)
     table.add_row(
         "Remote config status", construct_remote_config_status_str(apio_ctx)
     )
     table.add_row(
         "Veriable formatter",
-        str(apio_ctx.packages_dir / "verible/bin/verible-verilog-format"),
+        str(apio_ctx.apio_packages_dir / "verible/bin/verible-verilog-format"),
     )
     table.add_row(
         "Veriable language server",
-        str(apio_ctx.packages_dir / "verible/bin/verible-verilog-ls"),
+        str(apio_ctx.apio_packages_dir / "verible/bin/verible-verilog-ls"),
     )
 
     # -- Render the table.
@@ -167,7 +183,8 @@ def _platforms_cli():
     # Create the apio context.
     apio_ctx = ApioContext(
         project_policy=ProjectPolicy.NO_PROJECT,
-        config_policy=RemoteConfigPolicy.NO_CONFIG,
+        remote_config_policy=RemoteConfigPolicy.CACHED_OK,
+        packages_policy=PackagesPolicy.ENSURE_PACKAGES,
     )
 
     # -- Define the table.
@@ -237,7 +254,8 @@ def _colors_cli():
     # -- This initializes the output console.
     ApioContext(
         project_policy=ProjectPolicy.NO_PROJECT,
-        config_policy=RemoteConfigPolicy.NO_CONFIG,
+        remote_config_policy=RemoteConfigPolicy.CACHED_OK,
+        packages_policy=PackagesPolicy.ENSURE_PACKAGES,
     )
 
     # -- Print title.
@@ -312,12 +330,13 @@ Examples:
     help=APIO_INFO_THEMES_HELP,
 )
 def _themes_cli():
-    """Implements the 'apio info colors' command."""
+    """Implements the 'apio info themes' command."""
 
     # -- This initializes the output console.
     ApioContext(
         project_policy=ProjectPolicy.NO_PROJECT,
-        config_policy=RemoteConfigPolicy.NO_CONFIG,
+        remote_config_policy=RemoteConfigPolicy.CACHED_OK,
+        packages_policy=PackagesPolicy.ENSURE_PACKAGES,
     )
 
     # -- Collect the list of apio list names.
@@ -389,6 +408,145 @@ def _themes_cli():
     cout()
 
 
+# ------ apio info commands
+
+
+def _list_boards_table_format(commands):
+    """Format and output the commands table. 'commands' is a sorted
+    list of [command_name, command_description]
+    """
+    # -- Generate the table.
+    table = Table(
+        show_header=True,
+        show_lines=True,
+        padding=PADDING,
+        box=box.SQUARE,
+        border_style=BORDER,
+        title="Apio commands",
+        title_justify="left",
+    )
+
+    table.add_column("APIO COMMAND", no_wrap=True, min_width=20, style=EMPH2)
+    table.add_column("DESCRIPTION", no_wrap=True)
+
+    for cmd in commands:
+        table.add_row(cmd[0], cmd[1])
+
+    # -- Render the table.
+    cout()
+    ctable(table)
+
+
+def _list_boards_docs_format(commands):
+    """Format and output the commands markdown doc. 'commands' is a sorted
+    list of [command_name, command_description]
+    """
+
+    header1 = "APIO COMMAND"
+    header2 = "DESCRIPTION"
+
+    # -- Replace the command names with markdown link to the command doc page.
+    tagged_commands = [
+        [f"[{c[0]}](cmd-apio-{c[0]}.md)", c[1]] for c in commands
+    ]
+
+    # -- Determine column sizes
+    w1 = max(len(header1), *(len(cmd[0]) for cmd in tagged_commands))
+    w2 = max(len(header2), *(len(cmd[1]) for cmd in tagged_commands))
+
+    # -- Print page header
+    today = date.today()
+    today_str = f"{today.strftime('%B')} {today.day}, {today.year}"
+    cwrite("\n<!-- BEGIN generation by 'apio commands --docs' -->\n")
+    cwrite("\n# Apio commands\n")
+    cwrite(
+        f"\nThis markdown page was generated automatically on {today_str}.\n\n"
+    )
+
+    # -- Table header
+    cwrite(
+        "| {0} | {1} |\n".format(
+            header1.ljust(w1),
+            header2.ljust(w2),
+        )
+    )
+
+    cwrite(
+        "| {0} | {1} |\n".format(
+            "-" * w1,
+            "-" * w2,
+        )
+    )
+
+    # -- Add the rows
+    for tagged_cmd in tagged_commands:
+        cwrite(
+            "| {0} | {1} |\n".format(
+                tagged_cmd[0].ljust(w1),
+                tagged_cmd[1].ljust(w2),
+            )
+        )
+
+    # -- All done.
+    cwrite("\n<!-- END generation by 'apio commands --docs' -->\n\n")
+
+
+# -- Text in the rich-text format of the python rich library.
+APIO_INFO_COMMANDS_HELP = """
+The command 'apio info commands' lists the the available apio commands \
+in a table format. If the option '--docs' is specified, the command outputs \
+the list as a markdown document that is used to automatically update the \
+Apio documentation.
+
+Examples:[code]
+  apio info commands
+  apio info commands --docs > docs/commands-list.md[/code]
+"""
+
+
+@click.command(
+    name="commands",
+    cls=ApioCommand,
+    short_help="Show apio commands.",
+    help=APIO_INFO_COMMANDS_HELP,
+)
+@options.docs_format_option
+def _commands_cli(
+    # Options
+    docs,
+):
+    """Implements the 'apio info commands' command."""
+
+    # -- We perform this lazy cyclic import here to allow the two modules
+    # -- to initialize properly without a cyclic import.
+    #
+    # pylint: disable=import-outside-toplevel
+    # pylint: disable=cyclic-import
+    from apio.commands import apio as apio_main
+
+    # -- This initializes the output console.
+    ApioContext(
+        project_policy=ProjectPolicy.NO_PROJECT,
+        remote_config_policy=RemoteConfigPolicy.CACHED_OK,
+        packages_policy=PackagesPolicy.IGNORE_PACKAGES,
+    )
+
+    # -- Collect commands as a list of <name, description>
+    commands = []
+    for subgroup in apio_main.SUBGROUPS:
+        for cmd in subgroup.commands:
+            commands.append([cmd.name, cmd.get_short_help_str()])
+
+    # -- Sort the commands list alphabetically.
+    commands.sort()
+
+    # -- Generate the output
+    if docs:
+        _list_boards_docs_format(commands)
+    else:
+        _list_boards_table_format(commands)
+
+
 # ------ apio info
 
 # -- Text in the rich-text format of the python rich library.
@@ -406,6 +564,7 @@ SUBGROUPS = [
             _platforms_cli,
             _colors_cli,
             _themes_cli,
+            _commands_cli,
         ],
     ),
 ]

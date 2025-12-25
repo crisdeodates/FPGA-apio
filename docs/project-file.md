@@ -85,8 +85,33 @@ Apio uses the board ID to determine information such as the FPGA part
 number and the programmer command to use to upload the design to the
 board.
 
-If your project contains a `boards.jsonc` file with custom board defintion, the
+If your project contains a `boards.jsonc` file with custom board definition, the
 board ID must be from that file.
+
+### constraint-file
+
+The optional `constraint-file` option allows to specify the constraint file
+(aka pinout file) and to use different constraint file for different envs. Its
+value is a relative path to a constraint file under the project's root. 
+The constraint file extension must be the one expected by the
+FPGA architecture, for example `.lpf` for ICE40 architecture.
+
+If `constraint-file` is not specified and the project directory tree 
+contains exactly one file with the expected extension, that files is used
+automatically as the constraint file, otherwise Apio exists with an error
+message.
+
+```
+; ICE40 board.
+[env:env1]
+board = alhambra-ii
+constraint-file = alhambra-ii.lpf
+
+; Gowin board.
+[env:env2]
+board = sipeed-tang-nano-9k
+constraint-file = board1/tang-nano-9k.cst
+```
 
 ### default-testbench
 
@@ -173,7 +198,7 @@ programmer-cmd = iceprog -d i:0x${VID}:0x${PID} ${BIN_FILE}
 ```
 
 The list of supported placeholders is available in the Apio
-standard boards definitions files [boards.jsonc](https://github.com/FPGAwars/apio/blob/develop/apio/resources/programmers.jsonc).
+standard boards definitions files [programmers.jsonc](https://github.com/FPGAwars/apio-definitions/blob/main/definitions/programmers.jsonc).
 
 > The placeholder `${BIN_FILE}` is not appended automatically to the
 > programmer-cmd option and need to be added explicitly if needed.

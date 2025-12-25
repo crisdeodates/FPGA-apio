@@ -14,7 +14,12 @@ import click
 from apio.common.apio_console import cerror
 from apio.utils import util, cmd_util
 from apio.commands import options
-from apio.apio_context import ApioContext, ProjectPolicy, RemoteConfigPolicy
+from apio.apio_context import (
+    ApioContext,
+    PackagesPolicy,
+    ProjectPolicy,
+    RemoteConfigPolicy,
+)
 from apio.managers.project import (
     DEFAULT_TOP_MODULE,
     create_project_file,
@@ -57,7 +62,7 @@ complete and buildable project. To create complete projects, refer to the \
 )
 @click.pass_context
 @board_option
-@options.top_module_option_gen(help="Set the top level module name.")
+@options.top_module_option_gen(short_help="Set the top level module name.")
 @options.project_dir_option
 def cli(
     _: click.Context,
@@ -77,7 +82,8 @@ def cli(
     # -- Create the apio context.
     apio_ctx = ApioContext(
         project_policy=ProjectPolicy.NO_PROJECT,
-        config_policy=RemoteConfigPolicy.NO_CONFIG,
+        remote_config_policy=RemoteConfigPolicy.CACHED_OK,
+        packages_policy=PackagesPolicy.ENSURE_PACKAGES,
     )
 
     # -- Make sure the board exist.

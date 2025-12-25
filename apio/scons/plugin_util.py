@@ -10,13 +10,15 @@
 """Helper functions for apio scons plugins."""
 
 
+from glob import glob
 import sys
 import os
 import re
 import json
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Dict, Optional, Union
+from typing import List, Dict, Optional, Union, Callable
 from rich.table import Table
 from rich import box
 from SCons import Scanner
@@ -27,7 +29,9 @@ from SCons.Script.SConscript import SConsEnvironment
 from SCons.Node import NodeList
 from SCons.Node.Alias import Alias
 from apio.scons.apio_env import ApioEnv
+from apio.common.proto.apio_pb2 import SimParams
 from apio.common.common_util import (
+    PROJECT_BUILD_PATH,
     has_testbench_name,
     is_source_file,
 )
@@ -64,37 +68,83 @@ def map_params(params: Optional[List[Union[str, Path]]], fmt: str) -> str:
     return " ".join(mapped_params)
 
 
-def get_constraint_file(
-    apio_env: ApioEnv, file_ext: str, top_module: str
-) -> str:
-    """Returns the name of the constrain file to use.
+def get_constraint_file(apio_env: ApioEnv, file_ext: str) -> str:
+    """Returns the name of the constraint file to use.
 
-    env is the sconstrution environment.
+    env is the sconstruction environment.
 
     file_ext is a string with the constrained file extension.
     E.g. ".pcf" for ice40.
 
-    top_module is the top module name. It's is used to construct the
-    default file name.
-
-    Returns the file name if found or a default name otherwise otherwise.
+    Returns the file name if found or exit with an error otherwise.
     """
-    # Files in alphabetical order.
-    files = apio_env.scons_env.Glob(f"*{file_ext}")
-    n = len(files)
-    # Case 1: No matching files.
+
+    # -- If the user specified a 'constraint-file' in apio.ini then use it.
+    user_specified = apio_env.params.apio_env_params.constraint_file
+
+    if user_specified:
+        path = Path(user_specified)
+        # -- Path should be relative.
+        if path.is_absolute():
+            cerror(f"Constraint file path is not relative: {user_specified}")
+            sys.exit(1)
+        # -- Constrain file extension should match the architecture.
+        if path.suffix != file_ext:
+            cerror(
+                f"Constraint file should have the extension '{file_ext}': "
+                f"{user_specified}."
+            )
+            sys.exit(1)
+        # -- File should not be under _build
+        if PROJECT_BUILD_PATH in path.parents:
+            cerror(
+                f"Constraint file should not be under {PROJECT_BUILD_PATH}: "
+                f"{user_specified}."
+            )
+            sys.exit(1)
+        # -- Path should not contain '..' to avoid traveling outside of the
+        # -- project and coming back.
+        for part in path.parts:
+            if part == "..":
+                cerror(
+                    f"Constraint file path should not contain '..': "
+                    f"{user_specified}."
+                )
+                sys.exit(1)
+
+        # -- Constrain file looks good.
+        return user_specified
+
+    # -- No user specified constraint file, we will try to look for it
+    # -- in the project tree.
+    glob_files: List[str] = glob(f"**/*{file_ext}", recursive=True)
+
+    # -- Exclude files that are under _build
+    filtered_files: List[str] = [
+        f for f in glob_files if PROJECT_BUILD_PATH not in Path(f).parents
+    ]
+
+    # -- Handle by file count.
+    n = len(filtered_files)
+
+    # -- Case 1: No matching constrain files.
     if n == 0:
-        result = f"{top_module.lower()}{file_ext}"
-        cwarning(f"No {file_ext} constraints file, assuming '{result}'.")
-        return result
-    # Case 2: Exactly one file found.
+        cerror(f"No constraint file '*{file_ext}' found.")
+        sys.exit(1)
+
+    # -- Case 2: Exactly one constrain file found.
     if n == 1:
-        result = str(files[0])
+        result = str(filtered_files[0])
         return result
-    # Case 3: Multiple matching files.
+
+    # -- Case 3: Multiple matching constrain files.
     cerror(
-        f"Found multiple '*{file_ext}' "
-        "constrain files, expecting exactly one."
+        f"Found {n} constraint files '*{file_ext}' "
+        "in the project tree, which one to use?"
+    )
+    cout(
+        "Use the apio.ini constraint-file option to specify the desired file.",
+        style=INFO,
     )
     sys.exit(1)
 
@@ -223,11 +273,23 @@ def verilator_lint_action(
     extra_params: List[str] = None,
     lib_dirs: List[Path] = None,
     lib_files: List[Path] = None,
-) -> str:
-    """Construct an verilator scons action string.
+) -> List[
+    Callable[
+        [
+            List[File],
+            List[Alias],
+            SConsEnvironment,
+        ],
+        None,
+    ]
+    | str,
+]:
+    """Construct an verilator scons action.
     * extra_params: Optional additional arguments.
     * libs_dirs: Optional directories for include search.
     * lib_files: Optional additional files to include.
+    Returns an action in a form of a list with two steps, a function to call
+    and a string command.
     """
 
     # -- Sanity checks
@@ -275,25 +337,80 @@ class SimulationConfig:
     srcs: List[str]  # List of source files to compile.
 
 
-def waves_target(
+def detached_action(api_env: ApioEnv, cmd: List[str]) -> Action:
+    """
+    Launch the given command, given as a list of tokens, in a detached
+    (non blocking) mode.
+    """
+
+    def action_func(
+        target: List[Alias], source: List[File], env: SConsEnvironment
+    ):
+        """A call back function to perform the detached command invocation."""
+
+        # -- Make the linter happy
+        # pylint: disable=consider-using-with
+        _ = (target, source, env)
+
+        # -- NOTE: To debug these Popen operations, comment out the stdout=
+        # -- and stderr= lines to see the output and error messages from the
+        # -- commands.
+
+        # -- Handle the case of Window.
+        if api_env.is_windows:
+            creationflags = (
+                subprocess.DETACHED_PROCESS
+                | subprocess.CREATE_NEW_PROCESS_GROUP
+            )
+            subprocess.Popen(
+                cmd,
+                creationflags=creationflags,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                close_fds=True,
+                shell=False,
+            )
+            return 0
+
+        # -- Handle the rest (macOS and Linux)
+        subprocess.Popen(
+            cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            close_fds=True,
+            start_new_session=True,
+            shell=False,
+        )
+        return 0
+
+    # -- Create the command display string that will be shown to the user.
+    cmd_str: str = subprocess.list2cmdline(cmd)
+    display_str: str = "[detached] " + cmd_str
+
+    # -- Create the action and return.
+    action = Action(action_func, display_str)
+    return action
+
+
+def gtkwave_target(
     api_env: ApioEnv,
     name: str,
     vcd_file_target: NodeList,
     sim_config: SimulationConfig,
-    no_gtkwave: bool,
+    sim_params: SimParams,
 ) -> List[Alias]:
     """Construct a target to launch the QTWave signal viewer.
     vcd_file_target is the simulator target that generated the vcd file
     with the signals. Returns the new targets.
     """
 
-    # -- Construct the commands list.
-    commands = []
+    # -- Construct the list of actions.
+    actions = []
 
-    if no_gtkwave:
+    if sim_params.no_gtkwave:
         # -- User asked to skip gtkwave. The '@' suppresses the printing
         # -- of the echo command itself.
-        commands.append(
+        actions.append(
             "@echo 'Flag --no-gtkwave was found, skipping GTKWave.'"
         )
 
@@ -307,21 +424,33 @@ def waves_target(
         # -- With the stock oss-cad-suite windows package, this is done in the
         # -- environment.bat script.
         if api_env.is_windows:
-            commands.append("gdk-pixbuf-query-loaders --update-cache")
+            actions.append("gdk-pixbuf-query-loaders --update-cache")
 
         # -- The actual wave viewer command.
-        commands.append(
-            "gtkwave {0} {1} {2}.gtkw".format(
-                '--rcvar "splash_disable on" --rcvar "do_initial_zoom_fit 1"',
-                vcd_file_target[0],
-                sim_config.testbench_name,
-            )
-        )
+        gtkwave_cmd = [
+            "gtkwave",
+            "--rcvar",
+            "splash_disable on",
+            "--rcvar",
+            "do_initial_zoom_fit 1",
+            str(vcd_file_target[0]),
+            sim_config.testbench_name + ".gtkw",
+        ]
 
+        # -- Handle the case where gtkwave is run as a detached app, not
+        # -- waiting for it to close and not showing its output.
+        if sim_params.detach_gtkwave:
+            gtkwave_action = detached_action(api_env, gtkwave_cmd)
+        else:
+            gtkwave_action = subprocess.list2cmdline(gtkwave_cmd)
+
+        actions.append(gtkwave_action)
+
+    # -- Define a target with the action(s) we created.
     target = api_env.alias(
         name,
         source=vcd_file_target,
-        action=commands,
+        action=actions,
         always_build=True,
     )
 
@@ -438,8 +567,8 @@ def announce_testbench_action() -> FunctionAction:
     """Returns an action that prints a title with the testbench name."""
 
     def announce_testbench(
-        source: List[File],
         target: List[Alias],
+        source: List[File],
         env: SConsEnvironment,
     ):
         """The action function."""
@@ -472,8 +601,8 @@ def source_files_issue_scanner_action() -> FunctionAction:
     interactive_sim_re = re.compile(r"INTERACTIVE_SIM")
 
     def report_source_files_issues(
-        source: List[File],
         target: List[Alias],
+        source: List[File],
         env: SConsEnvironment,
     ):
         """The scanner function."""
@@ -616,8 +745,8 @@ def report_action(clk_name_index: int, verbose: bool) -> FunctionAction:
     indicates if the --verbose flag was invoked."""
 
     def print_pnr_report(
-        source: List[File],
         target: List[Alias],
+        source: List[File],
         env: SConsEnvironment,
     ):
         """Action function. Loads the pnr json report and print in a user
@@ -728,6 +857,7 @@ def make_verilator_config_builder(lib_path: Path):
     for rule in [
         "COMBDLY",
         "WIDTHEXPAND",
+        "SPECIFYIGN",
         "PINMISSING",
         "ASSIGNIN",
         "WIDTHTRUNC",

@@ -15,14 +15,19 @@ from typing import List, Dict, Optional
 import click
 from rich.table import Table
 from rich import box
-from apio.common.apio_console import cout, ctable
+from apio.common.apio_console import cout, ctable, cwrite
 from apio.common.apio_styles import INFO
 from apio.common import apio_console
 from apio.common.apio_styles import BORDER, EMPH1
-from apio.apio_context import ApioContext, ProjectPolicy, RemoteConfigPolicy
 from apio.utils import util, cmd_util
 from apio.commands import options
 from apio.managers.examples import Examples
+from apio.apio_context import (
+    ApioContext,
+    PackagesPolicy,
+    ProjectPolicy,
+    RemoteConfigPolicy,
+)
 
 
 @dataclass(frozen=True)
@@ -165,6 +170,10 @@ def _list_boards(apio_ctx: ApioContext, verbose: bool):
 def _list_boards_docs_format(apio_ctx: ApioContext):
     """Output boards information in a format for Apio Docs."""
 
+    # -- Get the version of the 'definitions' package use. At this point it's
+    # -- expected to be installed.
+    def_version, _ = apio_ctx.profile.get_installed_package_info("definitions")
+
     # -- Collect the boards info into a list of entires, one per board.
     entries: List[Entry] = _collect_board_entries(apio_ctx)
 
@@ -180,15 +189,17 @@ def _list_boards_docs_format(apio_ctx: ApioContext):
     # -- Print page header
     today = date.today()
     today_str = f"{today.strftime('%B')} {today.day}, {today.year}"
-    cout("\n<!-- BEGIN generation by 'apio boards --docs' -->")
-    cout("\n# Supported FPGA Boards")
-    cout(
-        f"\n> Generated on {today_str}. For the updated list "
-        "run `apio boards`."
+    cwrite("\n<!-- BEGIN generation by 'apio boards --docs' -->\n")
+    cwrite("\n# Supported FPGA Boards\n")
+    cwrite(
+        f"\nThis markdown page was generated automatically on {today_str} "
+        f"from version `{def_version}` of the Apio definitions package.\n"
     )
-    cout(
-        "\n> Custom board definitions can be added in the "
-        "project directory."
+    cwrite(
+        "\n> Custom board definitions can be added in the project directory "
+        "can latter be contributed to Apio in the "
+        "[apio-definitions](https://github.com/FPGAwars/apio-definitions/"
+        "tree/main/definitions) repository.\n"
     )
 
     # -- Add the rows, with separation line between architecture groups.
@@ -199,16 +210,16 @@ def _list_boards_docs_format(apio_ctx: ApioContext):
 
             cout(f"\n## {entry.fpga_arch.upper()} boards")
 
-            cout(
-                "\n| {0} | {1} | {2} | {3} |".format(
+            cwrite(
+                "\n| {0} | {1} | {2} | {3} |\n".format(
                     "BOARD-ID".ljust(w1),
                     "SIZE".ljust(w2),
                     "DESCRIPTION".ljust(w3),
                     "FPGA".ljust(w4),
                 )
             )
-            cout(
-                "| {0} | {1} | {2} | {3} |".format(
+            cwrite(
+                "| {0} | {1} | {2} | {3} |\n".format(
                     ":-".ljust(w1, "-"),
                     ":-".ljust(w2, "-"),
                     ":-".ljust(w3, "-"),
@@ -218,8 +229,8 @@ def _list_boards_docs_format(apio_ctx: ApioContext):
 
             last_arch = entry.fpga_arch
 
-        cout(
-            "| {0} | {1} | {2} | {3} |".format(
+        cwrite(
+            "| {0} | {1} | {2} | {3} |\n".format(
                 entry.board.ljust(w1),
                 entry.fpga_size.ljust(w2),
                 entry.board_description.ljust(w3),
@@ -227,7 +238,7 @@ def _list_boards_docs_format(apio_ctx: ApioContext):
             )
         )
 
-    cout("\n<!-- END generation by 'apio boards --docs' -->\n")
+    cwrite("\n<!-- END generation by 'apio boards --docs' -->\n\n")
 
 
 # ------------- apio boards
@@ -279,7 +290,8 @@ def cli(
     # -- not relevant for this command.
     apio_ctx = ApioContext(
         project_policy=project_policy,
-        config_policy=RemoteConfigPolicy.CACHED_OK,
+        remote_config_policy=RemoteConfigPolicy.CACHED_OK,
+        packages_policy=PackagesPolicy.ENSURE_PACKAGES,
         project_dir_arg=project_dir,
         report_env=False,
     )

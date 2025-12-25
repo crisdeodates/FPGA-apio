@@ -10,10 +10,16 @@
 
 """Apio scons related utilities.."""
 
+from pathlib import Path
 from dataclasses import dataclass
+from typing import List
+import webbrowser
 from SCons.Builder import BuilderBase
 from SCons.Action import Action
 from SCons.Script import Builder
+from SCons.Node.FS import File
+from SCons.Script.SConscript import SConsEnvironment
+from SCons.Node.Alias import Alias
 from apio.common.apio_console import cout
 from apio.common.apio_styles import SUCCESS
 from apio.common.common_util import SRC_SUFFIXES
@@ -48,41 +54,38 @@ class PluginBase:
         # -- Scanner for verilog source files.
         self.verilog_src_scanner = verilog_src_scanner(apio_env)
 
-        # -- A laceholder for the constrain file name.
+        # -- A placeholder for the constraint file name.
         self._constrain_file: str = None
 
-    def plugin_info(self) -> ArchPluginInfo:
+    def plugin_info(self) -> ArchPluginInfo:  # pragma: no cover
         """Return plugin specific parameters."""
         raise NotImplementedError("Implement in subclass.")
 
     def constrain_file(self) -> str:
-        """Finds and returns the constrain file path."""
+        """Finds and returns the constraint file path."""
         # -- Keep short references.
         apio_env = self.apio_env
-        params = apio_env.params
 
         # -- On first call, determine and cache.
         if self._constrain_file is None:
             self._constrain_file = get_constraint_file(
-                apio_env,
-                self.plugin_info().constrains_file_ext,
-                params.apio_env_params.top_module,
+                apio_env, self.plugin_info().constrains_file_ext
             )
         return self._constrain_file
 
-    def synth_builder(self) -> BuilderBase:
+    def synth_builder(self) -> BuilderBase:  # pragma: no cover
         """Creates and returns the synth builder."""
         raise NotImplementedError("Implement in subclass.")
 
-    def pnr_builder(self) -> BuilderBase:
+    def pnr_builder(self) -> BuilderBase:  # pragma: no cover
         """Creates and returns the pnr builder."""
         raise NotImplementedError("Implement in subclass.")
 
-    def bitstream_builder(self) -> BuilderBase:
+    def bitstream_builder(self) -> BuilderBase:  # pragma: no cover
         """Creates and returns the bitstream builder."""
         raise NotImplementedError("Implement in subclass.")
 
-    def testbench_compile_builder(self) -> BuilderBase:
+    def testbench_compile_builder(self) -> BuilderBase:  # pragma: no cover
         """Creates and returns the testbench compile builder."""
         raise NotImplementedError("Implement in subclass.")
 
@@ -124,11 +127,12 @@ class PluginBase:
 
         return Builder(
             # See https://tinyurl.com/yosys-sv-graph
+            # For -wireshape see https://github.com/YosysHQ/yosys/pull/4252
             action=(
                 'yosys -p "read_verilog -sv $SOURCES; show -format dot'
-                ' -colors 1 -prefix {0} {1}" {2} {3}'
+                ' -colors 1 -wireshape plaintext -prefix {0} {1}" {2} {3}'
             ).format(
-                apio_env.target,
+                apio_env.graph_target,
                 top_module,
                 "" if params.verbosity.all else "-q",
                 get_define_flags(apio_env),
@@ -160,10 +164,29 @@ class PluginBase:
         type_str = type_map[graph_params.output_type]
         assert type_str, f"Unexpected graph type {graph_params.output_type}"
 
-        def completion_action(source, target, env):  # noqa
-            """Action function that prints a completion message."""
-            _ = (source, target, env)  # Unused
-            cout(f"Generated {apio_env.target}.{type_str}", style=SUCCESS)
+        def completion_action(
+            target: List[Alias],
+            source: List[File],
+            env: SConsEnvironment,
+        ):  # noqa
+            """Action function that prints a completion message and if
+            requested, open a viewer on the output file.."""
+            _ = (source, env)  # Unused
+            # -- Get the rendered file.
+            target_file: File = target[0]
+            assert isinstance(target_file, File)
+            # -- Print a message
+            cout(f"Generated {str(target_file)}", style=SUCCESS)
+            # -- If requested, convert the file to URI and open it in the
+            # -- default browser.
+            if graph_params.open_viewer:
+                cout("Opening default browser")
+                file_path = Path(target_file.get_abspath())
+                file_uri = file_path.resolve().as_uri()
+                default_browser = webbrowser.get()
+                default_browser.open(file_uri)
+            else:
+                cout("User requested no graph viewer")
 
         actions = [
             f"dot -T{type_str} $SOURCES -o $TARGET",
@@ -179,10 +202,10 @@ class PluginBase:
 
         return graphviz_builder
 
-    def lint_config_builder(self) -> BuilderBase:
+    def lint_config_builder(self) -> BuilderBase:  # pragma: no cover
         """Creates and returns the lint config builder."""
         raise NotImplementedError("Implement in subclass.")
 
-    def lint_builder(self) -> BuilderBase:
+    def lint_builder(self) -> BuilderBase:  # pragma: no cover
         """Creates and returns the lint builder."""
         raise NotImplementedError("Implement in subclass.")

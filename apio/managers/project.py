@@ -33,7 +33,7 @@ ENV_NAME_HINT = (
 
 TOP_COMMENT = """\
 APIO project configuration file.
-For details see https://fpgawars.github.io/apio/project-file
+For details see https://fpgawars.github.io/apio/docs/project-file
 """
 
 # -- Apio options. These are the options that appear in the [apio] section.
@@ -57,6 +57,7 @@ ENV_OPTIONS = {
     "top-module",
     "yosys-synth-extra-options",
     "nextpnr-extra-options",
+    "constraint-file",
 }
 
 # -- The subset ENV_OPTIONS that is required.

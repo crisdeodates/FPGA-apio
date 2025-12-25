@@ -15,7 +15,12 @@ from apio.common.apio_console import cout
 from apio.common.apio_styles import EMPH1
 from apio.managers.scons_manager import SConsManager
 from apio.commands import options
-from apio.apio_context import ApioContext, ProjectPolicy, RemoteConfigPolicy
+from apio.apio_context import (
+    ApioContext,
+    PackagesPolicy,
+    ProjectPolicy,
+    RemoteConfigPolicy,
+)
 from apio.common.proto.apio_pb2 import SimParams
 from apio.utils import cmd_util
 
@@ -37,14 +42,15 @@ Example:[code]
   apio sim                   # Simulate the default testbench.
   apio sim my_module_tb.v    # Simulate the specified testbench.
   apio sim my_module_tb.sv   # Simulate the specified testbench.
-  apio sim --no-gtkwave      # Simulate but skip GTKWave.[/code]
-
-[NOTE] Testbench specification is always the testbench file path relative to \
-the project directory, even if using the '--project-dir' option.
+  apio sim --no-gtkwave      # Simulate but skip GTKWave.
+  apio sim --detach          # Launch and forget gtkwave.[/code]
 
 [IMPORTANT] Avoid using the Verilog '$dumpfile()' function in your \
 testbenches, as this may override the default name and location Apio sets \
 for the generated .vcd file.
+
+[NOTE] Testbench specification is always the testbench file path relative to \
+the project directory, even if using the '--project-dir' option.
 
 The sim command defines the macro 'APIO_SIM=1' which can be used by \
 testbenches to skip `$fatal` statements to have the simulation continue and \
@@ -70,6 +76,15 @@ no_gtkw_wave_option = click.option(
     cls=cmd_util.ApioOption,
 )
 
+detach_option = click.option(
+    "detach",  # Var name.
+    "-d",
+    "--detach",
+    is_flag=True,
+    help="Launch and forget GTKWave.",
+    cls=cmd_util.ApioOption,
+)
+
 
 @click.command(
     name="sim",
@@ -79,9 +94,10 @@ no_gtkw_wave_option = click.option(
 )
 @click.pass_context
 @click.argument("testbench", nargs=1, required=False)
-@options.force_option_gen(help="Force simulation.")
+@options.force_option_gen(short_help="Force simulation.")
 @options.env_option_gen()
 @no_gtkw_wave_option
+@detach_option
 @options.project_dir_option
 def cli(
     _: click.Context,
@@ -91,16 +107,21 @@ def cli(
     force: bool,
     env: Optional[str],
     no_gtkwave: bool,
+    detach: bool,
     project_dir: Optional[Path],
 ):
     """Implements the apio sim command. It simulates a single testbench
     file and shows graphically the signal graphs.
     """
 
+    # pylint: disable=too-many-arguments
+    # pylint: disable=too-many-positional-arguments
+
     # -- Create the apio context.
     apio_ctx = ApioContext(
         project_policy=ProjectPolicy.PROJECT_REQUIRED,
-        config_policy=RemoteConfigPolicy.CACHED_OK,
+        remote_config_policy=RemoteConfigPolicy.CACHED_OK,
+        packages_policy=PackagesPolicy.ENSURE_PACKAGES,
         project_dir_arg=project_dir,
         env_arg=env,
     )
@@ -118,7 +139,10 @@ def cli(
 
     # -- Construct the scons sim params.
     sim_params = SimParams(
-        testbench=testbench, force_sim=force, no_gtkwave=no_gtkwave
+        testbench=testbench,
+        force_sim=force,
+        no_gtkwave=no_gtkwave,
+        detach_gtkwave=detach,
     )
 
     # -- Simulate the project with the given parameters

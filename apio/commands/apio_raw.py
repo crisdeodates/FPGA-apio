@@ -9,18 +9,53 @@
 
 import sys
 import subprocess
+import shlex
 from typing import Tuple, List
 import click
-from apio.common.apio_console import cout
-from apio.common.apio_styles import SUCCESS, ERROR
-from apio.apio_context import ApioContext, ProjectPolicy, RemoteConfigPolicy
+from apio.common.apio_console import cout, cerror
+from apio.common.apio_styles import SUCCESS, ERROR, INFO
+from apio.apio_context import (
+    ApioContext,
+    PackagesPolicy,
+    ProjectPolicy,
+    RemoteConfigPolicy,
+)
 from apio.commands import options
-from apio.utils import cmd_util, pkg_util
+from apio.utils import cmd_util
 from apio.utils.cmd_util import ApioCommand
-from apio.managers import installer
-
 
 # ----------- apio raw
+
+
+def run_command_with_possible_elevation(
+    apio_ctx: ApioContext, arg_list: List[str]
+) -> int:
+    """
+    Runs a command and returns its exit code.
+    On Windows: allows UAC elevation (like os.system), e.g. for zadig.
+    On macOS/Linux: runs directly
+    Never raises — always returns an int (even on catastrophic errors.
+    """
+    if not arg_list:
+        return 0  # nothing to run
+
+    try:
+        if apio_ctx.is_windows:
+            cmd_line = " ".join(shlex.quote(arg) for arg in arg_list)
+            return subprocess.call(["cmd.exe", "/c", cmd_line], shell=False)
+
+        # Mac and linux.
+        return subprocess.call(arg_list, shell=False)
+
+    # Specific common errors — give user-friendly feedback
+    except FileNotFoundError:
+        cout(f"Error: Command not found → {arg_list[0]}", style=ERROR)
+        return 127
+
+    except PermissionError:
+        cout(f"Error: Permission denied → {arg_list[0]}", style=ERROR)
+        return 126
+
 
 # -- Text in the rich-text format of the python rich library.
 APIO_RAW_HELP = """
@@ -38,10 +73,12 @@ Examples:[code]
   apio raw    -- yosys                # Yosys interactive mode.
   apio raw    -- icepll -i 12 -o 30   # Calc ICE PLL.
   apio raw    -- which yosys          # Lookup a command.
+  apio raw    -- bash                 # Open a shell with Apio's env.
+  apio raw    -- zadig                # Run Zadig (on Windows).
   apio raw -v                         # Show apio env setting.
   apio raw -h                         # Show this help info.[/code]
 
-The marker '--' is used to separate between the arguments of the apio \
+The marker '--' must separate between the arguments of the apio \
 command itself and those of the executed command.
 """
 
@@ -66,6 +103,41 @@ def cli(
     """Implements the apio raw command which executes user
     specified commands from apio installed tools.
     """
+
+    # -- If the user specifies a raw command, verify that the '--' separator
+    # -- exists and that all the command tokens were specified after it.
+    # -- Ideally Click should be able to validate it but it doesn't (?).
+    if cmd:
+
+        # -- Locate the first '--' in argv. None if not found.
+        dd_index = next((i for i, x in enumerate(sys.argv) if x == "--"), None)
+
+        # -- If the '--' separator was not specified this is an error.
+        if dd_index is None:
+            cerror("The raw command separator '--' was not found.")
+            cout(
+                "The raw command should be specified after a '--' separator.",
+                "Type 'apio raw -h' for details.",
+                style=INFO,
+            )
+            sys.exit(1)
+
+        # -- Number of command tokens after the "--"
+        n_after = len(sys.argv) - dd_index - 1
+
+        # -- Command tokens that where specified before the '--'
+        tokens_before = list(cmd)[: len(cmd) - n_after]
+
+        # -- Should have no command tokens before the "--"
+        if tokens_before:
+            cerror(f"Invalid arguments: {tokens_before}.")
+            cout(
+                "Did you mean to have them after the '--' separator?",
+                "See 'apio raw -h' for details.",
+                style=INFO,
+            )
+            sys.exit(1)
+
     # -- At lease one of -v and cmd should be specified.
     cmd_util.check_at_least_one_param(cmd_ctx, ["verbose", "cmd"])
 
@@ -74,16 +146,13 @@ def cli(
     # -- packages to be available for the 'apio raw' command.
     apio_ctx = ApioContext(
         project_policy=ProjectPolicy.NO_PROJECT,
-        config_policy=RemoteConfigPolicy.CACHED_OK,
+        remote_config_policy=RemoteConfigPolicy.CACHED_OK,
+        packages_policy=PackagesPolicy.ENSURE_PACKAGES,
     )
-
-    # -- If needed, install missing packages.
-    if cmd:
-        installer.install_missing_packages_on_the_fly(apio_ctx)
 
     # -- Set the env for packages. If verbose, also dumping the env changes
     # -- in a user friendly way.
-    pkg_util.set_env_for_packages(apio_ctx, quiet=not verbose, verbose=verbose)
+    apio_ctx.set_env_for_packages(quiet=not verbose, verbose=verbose)
 
     # -- If no command, we are done.
     if not cmd:
@@ -98,11 +167,12 @@ def cli(
         cout(f"\n---- Executing {cmd}:")
 
     # -- Invoke the command.
-    try:
-        exit_code = subprocess.call(cmd, shell=False)
-    except FileNotFoundError as e:
-        cout(f"{e}", style=ERROR)
-        sys.exit(1)
+    # try:
+    # exit_code = subprocess.call(cmd, shell=False)
+    exit_code = run_command_with_possible_elevation(apio_ctx, cmd)
+    # except FileNotFoundError as e:
+    #     cout(f"{e}", style=ERROR)
+    #     sys.exit(1)
 
     if verbose:
         cout("----\n")

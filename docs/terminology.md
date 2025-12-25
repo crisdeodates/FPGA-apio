@@ -1,14 +1,19 @@
 - **APIO_DEBUG** - An environment variable that enables debug output during command execution.
   Accepts values from 1 to 10, where 10 is the most verbose.
 
-- **Apio home** - The directory where Apio stores its packages and profile file. Defaults to
-  `~/.apio`, but can be changed using the `APIO_HOME` environment variable.
+- **Apio home** - The directory where Apio stores its profile file. Defaults to
+  `~/.apio`, but can be changed using the `APIO_HOME` environment variable as done
+  during the automated tests.
+
+  - **Apio packages dir** - The directory where Apio stores its installed packages. Defaults to
+  `~/.apio/packages`, but can be changed using the `APIO_PACKAGES` environment variable as done
+  during the automated tests.
 
 - **ApioContext** - A key Apio class instantiated at the start of each command. It provides
   access to Apio's resources and project and profile information.
 
-- **Board** - Defines an FPGA board, either in
-  `apio/resources/boards.jsonc` or a project-local `boards.jsonc` file.
+- **Board** - Defines an FPGA board, either in the Apio definitions or 
+  or a project-local `boards.jsonc` file.
 
 - **Click** - A third-party Python library for building command-line applications with
   subcommands. It handles Apio's command tree, argument parsing, and help text.
@@ -19,7 +24,7 @@
   `apio devices list`. Install them with `apio drivers install`.
 
 - **FPGA** - Defines an FPGA device, either in
-  `apio/resources/fpgas.jsonc` or a project-local `fpgas.jsonc` file.
+  the Apio standard definition or a project-local `fpgas.jsonc` file.
 
 - **Invoke** - A third-party Python tool used to run development tasks defined in
   `tasks.py`. For example, `invoke check` runs comprehensive pre-submit
@@ -40,7 +45,7 @@
   `~/.apio/profile.json`.
 
 - **Programmer** - Defines an FPGA programming tool, either in
-  `apio/resources/programmers.jsonc` or a project-local `programmers.jsonc` file.
+  the Apio standard definitions or a project-local `programmers.jsonc` file.
 
 - **Project** - An Apio class that abstracts the project configuration defined in the
   `apio.ini` file.
@@ -53,11 +58,6 @@
 - **Remote config** - A `.jsonc` configuration file stored in the Apio GitHub repository under
   `remote-config`. Apio occasionally fetches this file to check for updated
   package versions.
-
-- **Resources** - Apio configuration items stored in `.jsonc` files in the
-  `apio/resources` directory. These include definitions for FPGAs, programmers,
-  and boards supported by Apio. Users can add custom resource files in
-  their project directories, e.g., a `boards.jsonc` file for a custom board.
 
 - **Rich** - A third-party Python library for managing Apio's terminal output, including
   colored text and data tables.

@@ -9,21 +9,15 @@ on:
     branches:
       - develop
 
-  # NOTE: We run the test daily, even if we don't push anything, to ensure
-  # that the tests are still passing, despite potential changes in the github
-  # dependencies.
+  # Run daily at UTC midnight.
   schedule:
-    - cron: "0 0 * * *" # Runs daily at midnight UTC
+    - cron: "0 0 * * *"
 
   # Can be launched manually in github actions tab.
   workflow_dispatch: # Allows manual trigger
     inputs:
       commit_sha:
         description: "[Optional] commit SHA to test"
-        required: false
-        default: ""
-      remote_config_url:
-        description: "APIO_REMOTE_CONFIG_URL override"
         required: false
         default: ""
       verbose:
@@ -41,10 +35,10 @@ jobs:
 
     strategy:
       matrix:
-        # 'macos-latest' -> darwin apple silicon
-        # 'macos-13'     -> darwin intel x86
-        os: [ubuntu-22.04, macos-latest, macos-13, windows-latest]
-        python-version: ["3.11", "3.12", "3.13"]
+        # 'macos-latest'    -> darwin apple silicon
+        # 'macos-15-intel'  -> darwin intel x86
+        os: [ubuntu-22.04, macos-latest, macos-15-intel, windows-latest]
+        python-version: ['3.11', "3.12", "3.13", "3.14"]
 
     steps:
       - name: Show architecture
@@ -88,19 +82,7 @@ jobs:
       - name: Install dev tools
         run: |
           pip install invoke
-          invoke deps
-
-      - name: Maybe set APIO_REMOTE_CONFIG_URL
-        run: |
-          # If the remote config url manual input was specified. pass
-          # it via the env to the tested apio. This var passing is
-          # enabled in tox.ini.
-          if [ -n '${{inputs.remote_config_url}}' ]; then
-              echo 'APIO_REMOTE_CONFIG_URL=${{inputs.remote_config_url}}' >> $GITHUB_ENV
-              echo "Using APIO_REMOTE_CONFIG_URL"
-          else
-              echo "Not using APIO_REMOTE_CONFIG_URL"
-          fi
+          invoke install-deps
 
       # TODO: Move the logic here to an Invoke task and use it instead.
       - name: Run Tests

@@ -3,17 +3,24 @@
 # To install 'invoke' run: pip install invoke
 #
 # For more information see the Apio development guide at
-# https://fpgawars.github.io/apio/development-environment/
+# https://fpgawars.github.io/apio/docs/development-environment/
 #
 # A few useful Invoke tasks
 #   invoke --list        # Show available tasks
+#   invoke -l            # Show available tasks
 #   invoke lint          # Lint the python code
-#   invoke test          # Run the offline tests (fast)
-#   invoke check         # Run lint and all the tests (slow)
+#   invoke test       .  # Run lint and all the tests
 #   invoke install-apio  # Install to run 'apio' from the source code here.
 #   invoke docs-viewer   # Run a local http server to view the Apio docs.
+#   invoke test-coverage # Collect and show test coverage.
+#   invoke clean         # Clean project.
+
+#  NOTE: The shortcut 'inv' can be used instead of 'invoke'.
 
 import sys
+import webbrowser
+from pathlib import Path
+import shutil
 import platform
 import subprocess
 from subprocess import CompletedProcess
@@ -30,7 +37,7 @@ from invoke.context import Context
 # -- which is printed when running 'invoke --list'.
 
 # -- Latest supported python version.
-LATEST_PYTHON = "py313"
+LATEST_PYTHON = "py314"
 
 # -- The python interpreter that we currently use.
 PYTHON = sys.executable
@@ -51,6 +58,7 @@ def package_version(package_name: str) -> Optional[str]:
 def install_package(package_name: str, required_version: str) -> None:
     """If the package/version is not installed then install it. Otherwise
     do nothing."""
+    # -- Update if needed.
     if package_version(package_name) != required_version:
         print(f"\n*** Auto installing {package_name}@{required_version} ***")
         subprocess.check_call(
@@ -63,6 +71,8 @@ def install_package(package_name: str, required_version: str) -> None:
                 f"{package_name}=={required_version}",
             ]
         )
+
+    # -- Verify.
     assert (
         package_version(package_name) == required_version
     ), f"Expected to find {package_name}=={required_version}"
@@ -73,7 +83,7 @@ DEPENDENCIES = [
     ("tox", "4.27.0"),
     ("flit", "3.12.0"),
     ("mkdocs-material", "9.6.14"),
-    ("pytest", "8.3.5"),
+    ("pytest", "8.4.2"),
 ]
 
 
@@ -106,6 +116,22 @@ def announce_task(task_name: str) -> None:
     cout(f"Executing Apio task: {task_name}", style="magenta bold")
 
 
+def get_repo_root() -> Path:
+    """Return the root of the local apio github repository."""
+    # -- Return the directory that contains this file.
+    return Path(__file__).resolve().parent
+
+
+def open_test_coverage_viewer() -> None:
+    """Open a browser to view the test coverage results entry page."""
+    file_path = get_repo_root() / "_pytest-coverage" / "index.html"
+    file_uri = file_path.resolve().as_uri()
+
+    # -- Open in default browser.
+    default_browser = webbrowser.get()
+    default_browser.open(file_uri)
+
+
 def run(ctx: Context, cmd: List[str]) -> None:
     """Run a command. Abort if it returns an error code."""
     dry_run: bool = ctx.config.run.dry
@@ -121,10 +147,7 @@ def run(ctx: Context, cmd: List[str]) -> None:
 # ===================== Tasks definitions start here ==========================
 
 
-@task(
-    name="lint",
-    aliases=["l"],
-)
+@task(name="lint", aliases=["l"])
 def lint_task(ctx: Context):
     """Lint only."""
     announce_task("lint")
@@ -133,12 +156,9 @@ def lint_task(ctx: Context):
     run(ctx, [PYTHON, "-m", "tox", "-e", "lint"])
 
 
-@task(
-    name="test",
-    aliases=["t"],
-)
-def test_task(ctx: Context):
-    """Offline tests with the latest Python."""
+@task(name="test", aliases=["t"])
+def check_task(ctx: Context):
+    """Lint and run all tests using the latest Python."""
     announce_task("test")
     run(
         ctx,
@@ -149,20 +169,17 @@ def test_task(ctx: Context):
             "--skip-missing-interpreters",
             "false",
             "-e",
-            LATEST_PYTHON,
+            f"lint,{LATEST_PYTHON}",
             "--",
-            "--offline",
+            "--durations=10",
         ],
     )
 
 
-@task(
-    name="check",
-    aliases=["c"],
-)
-def check_task(ctx: Context):
-    """Lint and all tests using the latest Python."""
-    announce_task("check")
+@task(name="test-all", aliases=["ta"])
+def check_all_task(ctx: Context):
+    """Lint and run all tests using all Python versions."""
+    announce_task("test-all")
     run(
         ctx,
         [
@@ -171,28 +188,14 @@ def check_task(ctx: Context):
             "tox",
             "--skip-missing-interpreters",
             "false",
-            "-e",
-            f"lint,{LATEST_PYTHON}",
         ],
     )
 
 
-@task(
-    name="check-all",
-    aliases=["ca"],
-)
-def check_all_task(ctx: Context):
-    """Lint and all tests using all Python versions."""
-    announce_task("check-all")
-    run(ctx, [PYTHON, "-m", "tox", "--skip-missing-interpreters", "false"])
-
-
-@task(
-    name="test-coverage",
-    aliases=["tc"],
-)
-def test_coverage_task(ctx: Context):
-    """Generate test coverage report."""
+@task(name="test-coverage", aliases=["tc"])
+def test_coverage_task(ctx: Context, no_viewer=False):
+    """Generate test coverage report. Use --no-viewer or -n to suppress
+    opening the default browser as viewer."""
     announce_task("test-coverage")
     run(
         ctx,
@@ -205,14 +208,80 @@ def test_coverage_task(ctx: Context):
             "-e",
             LATEST_PYTHON,
             "--",
-            "--cov",
+            "--cov=apio",
+            "--cov={envsitepackagesdir}/apio",
+            "--cov=tests",
+            "--cov-config=.coveragerc",
+            "--cov-append",
             "--cov-report=html:_pytest-coverage",
         ],
     )
 
+    # -- Open a browser to show the results.
+    if not no_viewer:
+        print("Opening default browser")
+        open_test_coverage_viewer()
+    else:
+        print("User requested no viewer.")
+
+
+@task(name="view-coverage", aliases=["vc"])
+def view_coverage_task(_: Context):
+    """View test coverage from a previous run of 'test-coverage'."""
+    announce_task("view-coverage")
+
+    open_test_coverage_viewer()
+
+
+@task(name="clean", aliases=["c"])
+def clean_task(_: Context):
+    """Clean caches, artifacts, and temporary files."""
+    announce_task("clean")
+    r = get_repo_root()
+    assert isinstance(r, Path)
+
+    # -- Collect items to delete.
+    items = []
+    # -- Collect top level items first so they will be deleted first.
+    items.extend(r.glob(".tox"))
+    items.extend(r.glob("_site"))
+    items.extend(r.glob("_build"))
+    items.extend(r.glob(".pytest_cache"))
+    items.extend(r.glob(".coverage"))
+    items.extend(r.glob("htmlcov"))
+    items.extend(r.glob("_pytest-coverage"))
+    items.extend(r.glob(".coverage.*"))
+    # -- Collect nested items
+    items.extend(r.rglob("__pycache__"))
+
+    if not items:
+        print("Already clean")
+        return
+
+    print("Deleting:")
+
+    for item in items:
+        # -- Item must be strictly under root.
+        assert str(item).startswith(str(r))
+        assert not str(r).startswith(str(item))
+
+        # -- E.g. if we hit a __pycache__ under .tox but already deleted
+        # -- tox.
+        if not item.exists():
+            continue
+
+        # -- Item exists, delete it.
+        description = str(item.relative_to(r))
+        if item.is_dir():
+            print(f"[d] {description}")
+            shutil.rmtree(item)
+        else:
+            print(f"[f] {str(description)}")
+            item.unlink(missing_ok=False)
+
 
 # -- This task has not been tested.
-@task(name="publish-test")
+@task(name="publish-test", aliases=["pt"])
 def publish_test_task(ctx: Context):
     """Publish to Pypi test instance."""
     announce_task("publish-test")
@@ -220,7 +289,7 @@ def publish_test_task(ctx: Context):
 
 
 # -- This task has not been tested.
-@task(name="publish-prod")
+@task(name="publish-prod", aliases=["pd"])
 def publish_task(ctx: Context):
     """Publish to Pypi production instance."""
     announce_task("publish-prod")
@@ -232,6 +301,7 @@ def install_apio_task(ctx: Context):
     """Install apio package from source code."""
     announce_task("install-apio")
     run(ctx, [PYTHON, "-m", "pip", "install", "-e", "."])
+    run(ctx, ["apio", "packages", "update"])
     run(ctx, ["apio", "--version"])
     cout(
         "The source code of this repo is now "
@@ -249,12 +319,12 @@ def uninstall_apio_task(ctx: Context):
     cout("The'apio' pip package is uninstalled.", style="green bold")
 
 
-@task(name="install-deps", aliases=["deps"])
+@task(name="install-deps", aliases=["id"])
 def install_deps_task(_: Context):
     """Install development tools. Since we do at at the top of this file
     for every task, there is nothing to do here."""
     announce_task("install-deps")
-    cout("       required  installed")
+    cout(f"{'':17} {'required':9s} {'installed'}")
     for name, ver in DEPENDENCIES:
         cout(f"{name:17} {ver:9s} {version(name)}")
 

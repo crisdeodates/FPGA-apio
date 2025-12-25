@@ -91,6 +91,10 @@ message Environment {
   // Paths to oss-cad-suite libraries.
   required string yosys_path = 6;
   required string trellis_path = 7;
+
+  // The default shell id. This is the shell that scons
+  // is expected to use. See ApioContext for values.
+  required string scons_shell_id = 8;
 }
 
 // Information about the expanded active env from apio.ini.
@@ -107,6 +111,8 @@ message ApioEnvParams {
   repeated string yosys_synth_extra_options = 5;
   // The optional value of 'nextpnr-extra-options' option in apio.ini.
   repeated string nextpnr_extra_options = 6;
+  // The optional value of the 'constraint-file' option in apio.ini.
+  optional string constraint_file = 7 [default = ''];
 }
 
 // Lint target specific params.
@@ -130,6 +136,7 @@ enum GraphOutputType {
 message GraphParams {
   required GraphOutputType output_type = 1;
   optional string top_module = 2;
+  required bool open_viewer = 3;
 }
 
 // Sim target specific params.
@@ -144,6 +151,10 @@ message SimParams {
 
   // Perform the simulation but skip opening GTKWave
   required bool no_gtkwave = 3;
+
+  // If true, gtkwave is launched as a independent app and apio continues
+  // without waiting for it to close.
+  required bool detach_gtkwave = 4;
 }
 
 // Test target specific params. Originally called TestParams but this

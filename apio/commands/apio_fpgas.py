@@ -16,9 +16,14 @@ import click
 from rich.table import Table
 from rich import box
 from apio.common import apio_console
-from apio.common.apio_console import cout, ctable
+from apio.common.apio_console import cout, ctable, cwrite
 from apio.common.apio_styles import INFO, BORDER, EMPH1
-from apio.apio_context import ApioContext, ProjectPolicy, RemoteConfigPolicy
+from apio.apio_context import (
+    ApioContext,
+    PackagesPolicy,
+    ProjectPolicy,
+    RemoteConfigPolicy,
+)
 from apio.utils import util, cmd_util
 from apio.commands import options
 
@@ -153,6 +158,10 @@ def _list_fpgas(apio_ctx: ApioContext, verbose: bool):
 def _list_fpgas_docs_format(apio_ctx: ApioContext):
     """Output fpgas information in a format for Apio Docs."""
 
+    # -- Get the version of the 'definitions' package use. At this point it's
+    # -- expected to be installed.
+    def_version, _ = apio_ctx.profile.get_installed_package_info("definitions")
+
     # -- Collect the fpagas info into a list of entires, one per fpga.
     entries: List[Entry] = _collect_fpgas_entries(apio_ctx)
 
@@ -164,14 +173,17 @@ def _list_fpgas_docs_format(apio_ctx: ApioContext):
     # -- Print page header
     today = date.today()
     today_str = f"{today.strftime('%B')} {today.day}, {today.year}"
-    cout("\n<!-- BEGIN generation by 'apio fpgas --docs' -->")
-    cout("\n# Supported FPGAs")
-    cout(
-        f"\n> Generated on {today_str}. For the updated list run `apio fpgas`."
+    cwrite("\n<!-- BEGIN generation by 'apio fpgas --docs' -->\n")
+    cwrite("\n# Supported FPGAs\n")
+    cwrite(
+        f"\nThis markdown page was generated automatically on {today_str} "
+        f"from version `{def_version}` of the Apio definitions package.\n"
     )
-    cout(
-        "\n> Custom FPGAs definitions can be added in the "
-        "project directory."
+    cwrite(
+        "\n> Custom FPGAs definitions can be added in the project directory "
+        "and can latter be contributed in the "
+        "[apio-definitions](https://github.com/FPGAwars/apio-definitions/"
+        "tree/main/definitions) repository.\n"
     )
 
     # -- Add the rows, with separation line between architecture groups.
@@ -180,17 +192,17 @@ def _list_fpgas_docs_format(apio_ctx: ApioContext):
         # -- If switching architecture, add an horizontal separation line.
         if last_arch != entry.fpga_arch:
 
-            cout(f"\n## {entry.fpga_arch.upper()} FPGAs")
+            cwrite(f"\n## {entry.fpga_arch.upper()} FPGAs\n")
 
-            cout(
-                "\n| {0} | {1} | {2} |".format(
+            cwrite(
+                "\n| {0} | {1} | {2} |\n".format(
                     "FPGA-ID".ljust(w1),
                     "SIZE".ljust(w2),
                     "PART-NUM".ljust(w3),
                 )
             )
-            cout(
-                "| {0} | {1} | {2} |".format(
+            cwrite(
+                "| {0} | {1} | {2} |\n".format(
                     ":-".ljust(w1, "-"),
                     ":-".ljust(w2, "-"),
                     ":-".ljust(w3, "-"),
@@ -199,15 +211,15 @@ def _list_fpgas_docs_format(apio_ctx: ApioContext):
 
             last_arch = entry.fpga_arch
 
-        cout(
-            "| {0} | {1} | {2} |".format(
+        cwrite(
+            "| {0} | {1} | {2} |\n".format(
                 entry.fpga.ljust(w1),
                 entry.fpga_size.ljust(w2),
                 entry.fpga_part_num.ljust(w3),
             )
         )
 
-    cout("\n<!-- END generation by 'apio fpgas --docs' -->\n")
+    cwrite("\n<!-- END generation by 'apio fpgas --docs' -->\n\n")
 
 
 # -------- apio fpgas
@@ -259,7 +271,8 @@ def cli(
     # -- not relevant for this command.
     apio_ctx = ApioContext(
         project_policy=project_policy,
-        config_policy=RemoteConfigPolicy.NO_CONFIG,
+        remote_config_policy=RemoteConfigPolicy.CACHED_OK,
+        packages_policy=PackagesPolicy.ENSURE_PACKAGES,
         project_dir_arg=project_dir,
         report_env=False,
     )

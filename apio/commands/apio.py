@@ -20,6 +20,7 @@ from apio.commands import (
     apio_clean,
     apio_create,
     apio_devices,
+    apio_docs,
     apio_drivers,
     apio_examples,
     apio_format,
@@ -75,6 +76,7 @@ SUBGROUPS = [
             apio_boards.cli,
             apio_fpgas.cli,
             apio_examples.cli,
+            apio_docs.cli,
             apio_info.cli,
             apio_raw.cli,
             apio_api.cli,
@@ -145,7 +147,7 @@ https://github.com/FPGAwars/apio/wiki/Apio
 )
 # NOTE: Without this explicit version value, click has difficulty
 # determining the version when running under pyinstaller.
-@click.version_option(util.get_apio_version(), "-v", "--version")
+@click.version_option(util.get_apio_version_str(), "-v", "--version")
 def apio_top_cli():
     """The top level command group of apio commands"""
 

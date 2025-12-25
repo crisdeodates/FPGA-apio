@@ -9,6 +9,7 @@
 
 import sys
 import re
+from datetime import date
 from pathlib import Path
 from typing import List, Any, Optional
 import click
@@ -16,12 +17,16 @@ from rich.table import Table
 from rich import box
 from apio.common.apio_console import cerror
 from apio.common import apio_console
-from apio.common.apio_console import cout, ctable
+from apio.common.apio_console import cout, ctable, cwrite
 from apio.common.apio_styles import INFO, BORDER, EMPH1
-from apio.managers import installer
 from apio.managers.examples import Examples, ExampleInfo
 from apio.commands import options
-from apio.apio_context import ApioContext, ProjectPolicy, RemoteConfigPolicy
+from apio.apio_context import (
+    ApioContext,
+    PackagesPolicy,
+    ProjectPolicy,
+    RemoteConfigPolicy,
+)
 from apio.utils import util
 from apio.utils.cmd_util import ApioGroup, ApioSubgroup, ApioCommand
 
@@ -38,7 +43,8 @@ Examples:[code]
   apio examples list                     # List all examples
   apio examples list  -v                 # More verbose output.
   apio examples list | grep alhambra-ii  # Show alhambra-ii examples.
-  apio examples list | grep -i blink     # Show blinking examples.[/code]
+  apio examples list | grep -i blink     # Show blinking examples.
+  apio examples list --docs              # Use Apio docs format.[/code]
 """
 
 
@@ -50,9 +56,6 @@ def examples_sort_key(entry: ExampleInfo) -> Any:
 def list_examples(apio_ctx: ApioContext, verbose: bool) -> None:
     """Print all the examples available. Return a process exit
     code, 0 if ok, non zero otherwise."""
-
-    # -- Make sure that the examples package is installed.
-    installer.install_missing_packages_on_the_fly(apio_ctx)
 
     # -- Get list of examples.
     entries: List[ExampleInfo] = Examples(apio_ctx).get_examples_infos()
@@ -116,24 +119,98 @@ def list_examples(apio_ctx: ApioContext, verbose: bool) -> None:
             )
 
 
+def list_examples_docs_format(apio_ctx: ApioContext):
+    """Output examples information in a format for Apio Docs."""
+
+    # -- Get the version of the 'definitions' package use. At this point it's
+    # -- expected to be installed.
+    def_version, _ = apio_ctx.profile.get_installed_package_info("definitions")
+
+    # -- Get list of examples.
+    entries: List[ExampleInfo] = Examples(apio_ctx).get_examples_infos()
+
+    # -- Sort boards by case insensitive board id.
+    entries.sort(key=examples_sort_key)
+
+    # -- Determine column sizes
+    w1 = max(len("EXAMPLE"), *(len(entry.name) for entry in entries))
+    w2 = max(
+        len("DESCRIPTION"),
+        *(len(entry.description) for entry in entries),
+    )
+
+    # -- Print page header
+    today = date.today()
+    today_str = f"{today.strftime('%B')} {today.day}, {today.year}"
+    cwrite("\n<!-- BEGIN generation by 'apio examples list --docs' -->\n")
+    cwrite("\n# Apio Examples\n")
+    cwrite(
+        f"\nThis markdown page was generated automatically on {today_str} "
+        f"from version `{def_version}` of the Apio definitions package.\n"
+    )
+    cwrite(
+        "\n> Apio project examples can be submitted to the "
+        "[apio-examples](https://github.com/FPGAwars/apio-examples) Github "
+        "repository.\n"
+    )
+
+    # -- Add the rows, with separation line between architecture groups.
+    last_arch = None
+    for entry in entries:
+        # -- If switching architecture, add an horizontal separation line.
+        if last_arch != entry.fpga_arch:
+
+            cout(f"\n## {entry.fpga_arch.upper()} examples")
+
+            cwrite(
+                "\n| {0} | {1} |\n".format(
+                    "EXAMPLE".ljust(w1),
+                    "DESCRIPTION".ljust(w2),
+                )
+            )
+            cwrite(
+                "| {0} | {1} |\n".format(
+                    ":-".ljust(w1, "-"),
+                    ":-".ljust(w2, "-"),
+                )
+            )
+
+            last_arch = entry.fpga_arch
+
+        # -- Write the entry
+        cwrite(
+            "| {0} | {1} |\n".format(
+                entry.name.ljust(w1),
+                entry.description.ljust(w2),
+            )
+        )
+
+    cwrite("\n<!-- END generation by 'apio examples list --docs' -->\n\n")
+
+
 @click.command(
     name="list",
     cls=ApioCommand,
     short_help="List the available apio examples.",
     help=APIO_EXAMPLES_LIST_HELP,
 )
+@options.docs_format_option
 @options.verbose_option
-def _list_cli(verbose: bool):
+def _list_cli(docs: bool, verbose: bool):
     """Implements the 'apio examples list' command group."""
 
     # -- Create the apio context.
     apio_ctx = ApioContext(
         project_policy=ProjectPolicy.NO_PROJECT,
-        config_policy=RemoteConfigPolicy.CACHED_OK,
+        remote_config_policy=RemoteConfigPolicy.CACHED_OK,
+        packages_policy=PackagesPolicy.ENSURE_PACKAGES,
     )
 
-    # --List all available examples.
-    list_examples(apio_ctx, verbose)
+    # -- List the examples.
+    if docs:
+        list_examples_docs_format(apio_ctx)
+    else:
+        list_examples(apio_ctx, verbose)
 
 
 # ---- apio examples fetch
@@ -160,7 +237,7 @@ Examples:[code]
     help=APIO_EXAMPLES_FETCH_HELP,
 )
 @click.argument("example", metavar="EXAMPLE", nargs=1, required=True)
-@options.dst_option_gen(help="Set a different destination directory.")
+@options.dst_option_gen(short_help="Set a different destination directory.")
 def _fetch_cli(
     # Arguments
     example: str,
@@ -172,7 +249,8 @@ def _fetch_cli(
     # -- Create the apio context.
     apio_ctx = ApioContext(
         project_policy=ProjectPolicy.NO_PROJECT,
-        config_policy=RemoteConfigPolicy.CACHED_OK,
+        remote_config_policy=RemoteConfigPolicy.CACHED_OK,
+        packages_policy=PackagesPolicy.ENSURE_PACKAGES,
     )
 
     # -- Create the examples manager.
